@@ -84,7 +84,31 @@ module MiniC where
 
   -- | The 'fv' function takes a typed Mini Haskell program and returns their free variables.
   fv :: MiniC -> [Name]
-  fv _ = error "error"
+ fv :: MiniC -> [Name]
+  fv (V x) = [x]
+  fv (N n) = []
+  fv (B b) = []
+  fv (Suc x) = fv x
+  fv (Pred x) = fv x
+  fv (Plus x y) = fv x `union` fv y
+  fv (Prod x y) = fv x `union` fv y
+  fv (Neg x) = fv x
+  fv (Conj x y) = fv x `union` fv y
+  fv (Disy x y) = fv x `union` fv y
+  fv (Gt x y) = fv x `union` fv y
+  fv (Lt x y) = fv x `union` fv y
+  fv (Equi x y) = fv x `union` fv y
+  fv (Ift x y z) = fv x `union` fv y `union` fv z
+  fv (L x t e) = fv e \\ [x]
+  fv (Fix x t e) = fv e \\ [x]
+  fv (App t s) = fv t `union` fv s
+  fv (Seq x y) = fv x `union`fv y
+  fv (Li x) = fv x
+  --fv (Assign x y) = fv y
+  fv (Ref x) = fv x
+  fv (DeRef x) = fv x
+  --fv (Void) = 
+  fv (While x y z) = fv x `union` fv y `union` fv z
 
   {-|
   The 'newId' function creates a new variable with the following conditions:
@@ -113,17 +137,91 @@ module MiniC where
 
   -- | The 'alpha' function generates the alpha-equivalence of a typed Mini Haskell program.
   alpha :: MiniC -> MiniC
-  alpha _ = error "error"
-
+  alpha (V x) = V (newId x)
+  alpha (N n) = N n
+  alpha (B b) = B b
+  alpha (Suc x) = Suc (alpha x)
+  alpha (Pred x) = Pred (alpha x)
+  alpha (Plus x y) = Plus (alpha x) (alpha y)
+  alpha (Prod x y) = Prod (alpha x) (alpha y)
+  alpha (Neg x) = Neg (alpha x)
+  alpha (Conj x y) = Conj (alpha x) (alpha y)
+  alpha (Disy x y) = Disy (alpha x) (alpha y)
+  alpha (Gt x y) = Gt (alpha x) (alpha y)
+  alpha (Lt x y) = Lt (alpha x) (alpha y)
+  alpha (Equi x y) = Equi (alpha x) (alpha y)
+  alpha (Ift x y z) = Ift (alpha x) (alpha y) (alpha z)
+  alpha (L x t e) = (L (newId x) t (substitution e (x,(V (newId x)))))
+  alpha (Fix x t e) = (Fix (newId x) t (substitution e (x,(V (newId x)))))
+  alpha (App t s) = App (alpha t) (alpha s)
+  
   -- | The 'substitution' function applies the substitution given as 
   -- a parameter to a typed Mini Haskell program.
   substitution :: MiniC -> Subst -> MiniC
-  substitution _ _ = error "error"
-
+  substitution :: MiniC -> Subst -> MiniC
+  substitution (V n) (x,e) = if n == x then e else (V n)
+  substitution (N n) s = (N n)
+  substitution (B b) s = (B b)
+  substitution (Suc e) s = Suc (substitution e s)
+  substitution (Pred e) s = Pred (substitution e s)
+  substitution (Plus e1 e2) s = Plus (substitution e1 s) (substitution e2 s)
+  substitution (Prod e1 e2) s = Prod (substitution e1 s) (substitution e2 s)
+  substitution (Neg e1) s = Neg (substitution e1 s)
+  substitution (Conj e1 e2) s = Conj (substitution e1 s) (substitution e2 s)
+  substitution (Disy e1 e2) s = Disy (substitution e1 s) (substitution e2 s)
+  substitution (Gt e1 e2) s = Gt (substitution e1 s) (substitution e2 s)
+  substitution (Lt e1 e2) s = Lt (substitution e1 s) (substitution e2 s)
+  substitution (Equi e1 e2) s = Equi (substitution e1 s) (substitution e2 s)
+  substitution (Ift e1 e2 e3) s = Ift (substitution e1 s) (substitution e2 s) (substitution e3 s)
+  substitution (L x t e) s@(y,ez) = case (not (x `elem`(fv (ez) `union` [y]))) of 
+                        true -> L x t (substitution e s)
+                        false-> let x' = alpha(L x t e) in substitution x' s
+  substitution (Fix x t e) s@(y,ez) = if (x==y) then (Fix y t ez) else
+                           if not (x `elem` (fv ez))then (Fix x t (substitution e s)) else (substitution (alpha (Fix x t e)) s)
+  substitution (App x y) s = App (substitution x s) (substitution y s)
+  
   -- | The 'eval' function is an implementation of the evaluation for typed Mini Haskell
   -- programs.
   eval1 :: Exec -> Exec
-  eval1 (m,e) = error ("Execution Error: Locked state."++show (m,e))
+  eval1 (m(Suc(N n))) = (m,N (n+1))
+  eval1 (m,(Suc e)) = case eval1 (m,e) of
+    (m',e') -> (m',Suc e')
+  eval1 (m,(Plus (N n1) (N n2))) = (m,(N (n1 + n2)))
+  eval1 (m,(Plus (N n1) e)) = case eval1 (m,e) of
+    (m',e') -> (m',Plus (N n1) e')
+  eval1 (m,(Plus e1 e2)) = case eval1 (m,e1) of
+    (m',e') -> (m',Plus e' e2)
+  --Faltan los casos de todas las demas operaciones
+  eval1 (m,Ift (B b) e1 e2) = if b then (m,e1) else (m,e2)
+  eval1 (m,(Ift e1 e2 e3)) = case (m,e1) of
+    (m',e') -> (m',(Ift e' e2 e3))
+  eval1 (m,App (L x e) e2) = case isValue e2 of
+    True -> (m, substitution e (x,e2))
+    False -> case (m,e2) of
+      (m',e') -> (m',(App(L x e) e'))
+  eval1 (m,App e1 e2) = case isValue e1 of
+    True -> case eval1 (m,e2) of
+      (m',e2') -> (m',App e1 e2')
+    False -> case eval1 (m,e1) of
+      (m',e1') -> (m',App e1' e2)
+  eval1 (m,(Ref e)) = case isValue e of
+    True -> let l = newL m in (m++[(l,e)],Li l)
+    False -> case eval1 (m,e) of
+      (m',e') -> (m',Ref e')
+  eval1 (m,(DeRef (Li e))) = (m,get m e)
+  eval1 (m,(DeRef e)) = case eval1 (m,e) of
+    (m',e') -> (m',DeRef e')
+  eval1 (m,Seq Void e) = (m,e)
+  eval1 (m,Seq e1 e2) = case eval1 (m,e1) of
+    (m',e1') -> (m',Seq e1' e2)
+  eval1 (m,Assign (Li l) e) = case isValue e of
+    True -> (changeMem m l e, Void)
+    False -> case eval1 (m,e) of
+      (m',e') -> (m',Assign (Li l) e')
+  eval1 (m,Assign e1 e2) = case eval1 (m,e1) of
+    (m',e1') -> (m',Assign e1' e2)
+  eval1 (m,Void) = (m,Void)
+  eval1 (m,While e1 e2) = (m, (If e1 (Seq e2 (While e1 e2)) void))
 
   -- | The 'newL' function returns a new location memory.
   newL :: Memory -> Int
@@ -153,7 +251,11 @@ module MiniC where
   of the evaluation relation.
   -}
   evals' :: Exec -> Exec
-  evals' _ = error "error" 
+   evals' (V x) = (V x)
+  evals' (N n) = (N n)
+  evals' (B b) = (B b)
+  evals' e = evals' (eval1 e) 
+
 
   -- | The 'exec' function evaluates a program in a empty memory.
   exec :: MiniC -> Exec
