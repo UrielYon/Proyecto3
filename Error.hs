@@ -57,7 +57,9 @@ data KState = Eval Stack MiniHs | Return Stack MiniHs | Err Stack MiniHs derivin
 type Subst = (Name,MiniHs)
 
 fv :: MiniHs -> [Name]
-fv _ = error "error"
+fv (Raise e) = fv e
+fv (Handle e1 x e2) = fv e1 `union` (fv e2\\[x])
+
 
 newId :: Name -> Name
 newId x = let (p,s) = splitName x ("","") in
@@ -73,11 +75,17 @@ splitName n@(c:cs) (p,s) = case isDigit c of
   False -> splitName cs (p++[c],s)
 
 alpha :: MiniHs -> MiniHs
-alpha _ = error "error"
+alpha (Raise e) = Raise (alpha e)
+alpha (Handle e1 x e2) = Handle (alpha e1) x1 (alpha (substitution e2 (x,V x1))) where
+  x1 = newId x
 
 
 substitution :: MiniHs -> Subst -> MiniHs
-substitution _ _ = error "error"
+substitution (Handle e1 y e2) = s@(x,r) = case not (y `elem` ([x] `union` fv r)) of
+  True -> Handle (substitution e1 s) y (substitution e2 s)
+  False -> let l' = alpha (Handle (substitution e1 s) y e2) in substitution l'
+substitution (Raise e) s = Raise (substitution e s)
+
 
 isVal :: MiniHs -> Bool
 isVal (N _) = True
@@ -86,10 +94,45 @@ isVal (L _ _) = True
 isVal _ = False
 
 eval :: KState -> KState
-eval _ = error "K: Undefined."
+eval (Eval p (N n)) = Return p (N n)
+eval (Eval p (B b)) = Return p (B b)
+eval (Eval p (V x)) = Return p (V x)
+eval (Eval p (L x e)) = Return p (L x e)
+eval (Eval p (Plus e1 e2)) = (Eval (Plus () e2):p e1)
+eval (Eval (Plus () e2):p v) = case isVal v of
+  True -> (Eval (PlusR v ()):p e2)
+  False -> error
+eval (Eval (PlusR (N n) ()) (N m)) = (Return p (N n+m))
+eval (Return (NegF ()):p (B b)) = Return p (B not b)
+eval (Eval p (Neg e)) = (Eval (NegF ()):p e)
+eval (Return (AppR (L x e) ()):p v) = case isVal v of
+  True -> (Return p (substitution e (x,v)))
+  False -> error
+eval (Return (AppL () e2):p v) = case isVal v of
+  True -> (Eval (AppR v ()):p e2)
+  False -> error
+eval (Eval p (App e1 e2)) = (Eval (AppL () e2):p e1)
+eval (Eval p (Fix x e)) = (Eval p (substitution e (x,(Fix x e))))
+eval (Return (IftF () e2 e3):p (B False)) = (Eval p e3)
+eval (Return (IftF () e2 e3):p (B True)) = (Eval p e2)
+eval (Eval p (Ift e1 e2 e3)) = (Eval (IftF () e2 e3):p e1)
+eval (Eval p (Raise e)) = (Eval (RaiseF ()):p e)
+eval (Return (RaiseF ()):p v) = case isVal v of
+  True -> (Err p v)
+  False -> error "K Undefined"
+eval (Eval p (Handle e1 x e2)) = (Eval (HandleF() x e2):p e1)
+eval (Return (Handle () x e2):p v) = case isVal v of
+  True -> Return p v
+  False -> error "K Undefined"
+eval (Err (t:p) (Raise v)) = case t of
+  Handle () x e2 -> Eval p (substitution e2 (x,v))
+  _ -> Err p (Raise v)
 
 evals :: KState -> KState
-evals _ = error "error"
+evals s@(Return [] v) = case isVal v of
+  True -> s
+  False -> error
+evals s = evals (eval s)
 
 minus x y = Plus x (Prod y (N (-1)))
 
